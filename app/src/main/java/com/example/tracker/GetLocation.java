@@ -21,7 +21,7 @@ import static com.android.volley.Request.Method.POST;
 import static com.mapbox.mapboxsdk.Mapbox.getApplicationContext;
 
 public class GetLocation {
-    public static final String url_getLocation = "http://10.100.161.152/Tracker/getLocation.php";
+    public static final String url_getLocation = "http://192.168.31.68/Tracker/getLocation.php";
     public static Double otherLatitude ;
     public static Double otherLongitude;
 
@@ -45,14 +45,7 @@ public class GetLocation {
                             otherLongitude = Double.parseDouble(individual[1]);
                             startLatitude = otherLatitude;
                             startLongitude = otherLongitude;
-                            //Toast.makeText(getApplicationContext(),otherLatitude+"    "+otherLongitude,Toast.LENGTH_SHORT).show();
                             MainActivity.destination = new LatLng(otherLatitude,otherLongitude);
-
-                            //marker
-//                            mapboxMap.addMarker(new MarkerOptions()
-//                                    //.position(new LatLng(24.919351, 91.831725))
-//                                    .position(new LatLng(GetLocation.otherLatitude, GetLocation.otherLongitude))
-//                                    .title(LocationStore.Gps_Id));
                         }
 
                     }

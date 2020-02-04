@@ -5,6 +5,7 @@ import android.animation.TypeEvaluator;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.location.Location;
 import android.os.Build;
@@ -32,9 +33,13 @@ import com.mapbox.android.core.location.LocationEngineRequest;
 import com.mapbox.android.core.location.LocationEngineResult;
 import com.mapbox.android.core.permissions.PermissionsListener;
 import com.mapbox.android.core.permissions.PermissionsManager;
+import com.mapbox.api.directions.v5.models.DirectionsResponse;
+import com.mapbox.api.directions.v5.models.DirectionsRoute;
 import com.mapbox.geojson.Feature;
 import com.mapbox.geojson.Point;
 import com.mapbox.mapboxsdk.Mapbox;
+import com.mapbox.mapboxsdk.annotations.Marker;
+import com.mapbox.mapboxsdk.annotations.MarkerOptions;
 import com.mapbox.mapboxsdk.camera.CameraPosition;
 import com.mapbox.mapboxsdk.camera.CameraUpdateFactory;
 import com.mapbox.mapboxsdk.geometry.LatLng;
@@ -51,6 +56,14 @@ import com.mapbox.mapboxsdk.plugins.traffic.TrafficPlugin;
 import com.mapbox.mapboxsdk.style.layers.PropertyFactory;
 import com.mapbox.mapboxsdk.style.layers.SymbolLayer;
 import com.mapbox.mapboxsdk.style.sources.GeoJsonSource;
+import com.mapbox.services.android.navigation.ui.v5.NavigationLauncher;
+import com.mapbox.services.android.navigation.ui.v5.NavigationLauncherOptions;
+import com.mapbox.services.android.navigation.ui.v5.NavigationViewOptions;
+import com.mapbox.services.android.navigation.ui.v5.listeners.NavigationListener;
+import com.mapbox.services.android.navigation.ui.v5.listeners.RouteListener;
+import com.mapbox.services.android.navigation.ui.v5.route.NavigationMapRoute;
+import com.mapbox.services.android.navigation.v5.navigation.NavigationRoute;
+import com.mapbox.services.android.navigation.v5.routeprogress.ProgressChangeListener;
 
 import androidx.drawerlayout.widget.DrawerLayout;
 
@@ -58,10 +71,15 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 
 import android.view.Menu;
+import android.widget.Button;
 import android.widget.Toast;
 
 import java.lang.ref.WeakReference;
 import java.util.List;
+
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
 
 public class MainActivity extends AppCompatActivity
         implements NavigationView.OnNavigationItemSelectedListener, OnMapReadyCallback, PermissionsListener, View.OnClickListener,
@@ -89,11 +107,19 @@ public class MainActivity extends AppCompatActivity
     public static Location location;
     public static LatLng destination;
     public static LatLng point;
-    public  static String androidId;
+    public static String androidId;
+    public static String needed_location_Id;
+    public static Double firstLatitude, firstLongitude;
+    private Point destinationPosition;
+    private Point originPosition;
+    DirectionsRoute currentRoute;
+    public static LocationComponent locationComponent;
+    public static NavigationMapRoute navigationMapRoute;
+    public static boolean startTrack = false;
 
+    StyleCycle styleCycle = new StyleCycle();
 
-    private LocationChangeListeningActivityLocationCallback callback =
-            new LocationChangeListeningActivityLocationCallback(this);
+    private LocationChangeListeningActivityLocationCallback callback = new LocationChangeListeningActivityLocationCallback(this);
 
     @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.M)
@@ -107,7 +133,8 @@ public class MainActivity extends AppCompatActivity
         FloatingActionButton fab = findViewById(R.id.fab);
         fab.setOnClickListener(this);
 
-        androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+        //androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+        androidId = "01";
 
         DrawerLayout drawer = findViewById(R.id.drawer_layout);
         NavigationView navigationView = findViewById(R.id.nav_view);
@@ -134,7 +161,7 @@ public class MainActivity extends AppCompatActivity
                 Feature.fromGeometry(Point.fromLngLat(currentPosition.getLongitude(),
                         currentPosition.getLatitude())));
 
-        mapboxMap.setStyle(Style.TRAFFIC_DAY , new Style.OnStyleLoaded() {
+        mapboxMap.setStyle(styleCycle.getStyle(), new Style.OnStyleLoaded() {
             @Override
             public void onStyleLoaded(@NonNull Style style) {
                 buildingPlugin = new BuildingPlugin(mapView, mapboxMap, style);
@@ -142,10 +169,8 @@ public class MainActivity extends AppCompatActivity
                 buildingPlugin.setVisibility(true);
 
                 trafficPlugin = new TrafficPlugin(mapView, mapboxMap, style);
-                // Enable the traffic view by default
                 trafficPlugin.setVisibility(true);
 
-                //******************************************
                 style.addImage(("marker_icon"), BitmapFactory.decodeResource(
                         getResources(), R.drawable.location_marker1));
 
@@ -164,28 +189,19 @@ public class MainActivity extends AppCompatActivity
         });
     }
 
-    /**
-     * Initialize the Maps SDK's LocationComponent
-     */
+
     @SuppressWarnings( {"MissingPermission"})
     public void enableLocationComponent(@NonNull Style loadedMapStyle) {
-            // Check if permissions are enabled and if not request
         if (PermissionsManager.areLocationPermissionsGranted(this)) {
-            // Get an instance of the component
-            LocationComponent locationComponent = mapboxMap.getLocationComponent();
-            // Set the LocationComponent activation options
+            locationComponent = mapboxMap.getLocationComponent();
             LocationComponentActivationOptions locationComponentActivationOptions =
                     LocationComponentActivationOptions.builder(this, loadedMapStyle)
                             .useDefaultLocationEngine(false)
                             .build();
 
-            // Activate with the LocationComponentActivationOptions object
             locationComponent.activateLocationComponent(locationComponentActivationOptions);
-            // Enable to make component visible
             locationComponent.setLocationComponentEnabled(true);
-            // Set the component's camera mode
             locationComponent.setCameraMode(CameraMode.TRACKING);
-            // Set the component's render mode
             locationComponent.setRenderMode(RenderMode.COMPASS);
             initLocationEngine();
         } else {
@@ -194,11 +210,8 @@ public class MainActivity extends AppCompatActivity
         }
     }
 
-    /**
-     * Set up the LocationEngine and the parameters for querying the device's location
-     */
     @SuppressLint("MissingPermission")
-    private void initLocationEngine() {
+    public void initLocationEngine() {
         locationEngine = LocationEngineProvider.getBestLocationEngine(this);
 
         LocationEngineRequest request = new LocationEngineRequest.Builder(DEFAULT_INTERVAL_IN_MILLISECONDS)
@@ -219,8 +232,6 @@ public class MainActivity extends AppCompatActivity
     public void onExplanationNeeded(List<String> permissionsToExplain) {
         Toast.makeText(this, R.string.user_location_permission_explanation, Toast.LENGTH_LONG).show();
     }
-
-
 
     @Override
     public void onPermissionResult(boolean granted) {
@@ -253,14 +264,16 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
         int id = item.getItemId();
 
         //noinspection SimplifiableIfStatement
         if (id == R.id.action_settings) {
             return true;
+        }
+
+        if(id == R.id.action_aboutus) {
+            Intent intent = new Intent(getApplicationContext(), AboutUs.class);
+            startActivity(intent);
         }
 
 
@@ -275,26 +288,22 @@ public class MainActivity extends AppCompatActivity
 
         if (id == R.id.nav_home) {
 
-            CameraPosition position = new CameraPosition.Builder()
-                    .target(new LatLng(24.919351, 91.831725)) // Sets the new camera position
-                    .zoom(17) // Sets the zoom
-                    .bearing(180) // Rotate the camera
-                    .tilt(30) // Set the camera tilt
-                    .build(); // Creates a CameraPosition from the builder
-
-            mapboxMap.animateCamera(CameraUpdateFactory
-                    .newCameraPosition(position), 7000);
+            CameraChange.setCameraPosition(24.919351, 91.831725);
 
         } else if (id == R.id.nav_gallery) {
-
-        } else if (id == R.id.nav_slideshow) {
+            mapboxMap.setStyle(styleCycle.getNextStyle());
+        } else if (id == R.id.nav_buses) {
+            Intent intent = new Intent(getApplicationContext(),Bus_schedule.class);
+            startActivity(intent);
 
         } else if (id == R.id.nav_tools) {
 
+            MainActivity.startTrack = true;
+
         } else if (id == R.id.nav_share) {
 
-        } else if (id == R.id.nav_send) {
-
+        } else if (id == R.id.route_remove) {
+            navigationMapRoute.removeRoute();
         }
 
         DrawerLayout drawer = findViewById(R.id.drawer_layout);
@@ -304,12 +313,10 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public boolean onMapClick(@NonNull LatLng point) {
-
-
+        destinationPosition = Point.fromLngLat(point.getLongitude(),point.getLatitude());
+        originPosition = Point.fromLngLat(locationComponent.getLastKnownLocation().getLongitude(), locationComponent.getLastKnownLocation().getLatitude());
+        Route.getRoute(originPosition, destinationPosition);
         this.point = point;
-        //repeat.run();
-        Repeater ob = new Repeater();
-        ob.run();
         return false;
     }
 
@@ -319,6 +326,7 @@ public class MainActivity extends AppCompatActivity
     public void onStart() {
         super.onStart();
         mapView.onStart();
+
     }
 
     @Override
@@ -352,7 +360,6 @@ public class MainActivity extends AppCompatActivity
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        // Prevent leaks
         if (locationEngine != null) {
             locationEngine.removeLocationUpdates(callback);
         }
@@ -373,15 +380,7 @@ public class MainActivity extends AppCompatActivity
         if (mapboxMap != null) {
             trafficPlugin.setVisibility(!trafficPlugin.isVisible());
         }
-
-        CameraPosition position = new CameraPosition.Builder()
-                .target(new LatLng(latitude, longitude)) // Sets the new camera position
-                .zoom(15)
-                .bearing(180) // Rotate the camera
-                .tilt(30) // Set the camera tilt
-                .build(); // Creates a CameraPosition from the builder
-
-        mapboxMap.animateCamera(CameraUpdateFactory
-                .newCameraPosition(position), 7000);
+        CameraChange.setCameraPosition(latitude, longitude);
     }
+
 }
